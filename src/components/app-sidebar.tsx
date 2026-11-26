@@ -1,0 +1,291 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { ChevronRight, type LucideIcon } from 'lucide-react';
+
+import { Link, usePathname } from '@/core/i18n/navigation';
+import { localizeHref } from '@/paraglide/runtime.js';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  useSidebar,
+} from '@/components/ui/sidebar';
+
+export interface NavSubItem {
+  href: string;
+  label: string;
+  newTab?: boolean;
+}
+
+export interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  group?: string;
+  newTab?: boolean;
+  /** Sub-items render as a collapsible group under this item. */
+  items?: NavSubItem[];
+}
+
+export function AppSidebar({
+  brand,
+  brandHref = '/',
+  navItems,
+  footerNavItems,
+  footer,
+  variant = 'inset',
+  collapsible = 'offcanvas',
+}: {
+  brand: React.ReactNode;
+  brandHref?: string;
+  navItems: NavItem[];
+  footerNavItems?: NavItem[];
+  footer?: React.ReactNode;
+  variant?: 'sidebar' | 'floating' | 'inset';
+  /** offcanvas hides the sidebar on toggle; icon shrinks it to an icon rail. */
+  collapsible?: 'offcanvas' | 'icon';
+}) {
+  const pathname = usePathname();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const closeMobile = () => {
+    if (isMobile) setOpenMobile(false);
+  };
+
+  // H5 sheet stays open across SPA navigations unless we close it on route change.
+  useEffect(() => {
+    setOpenMobile(false);
+  }, [pathname, setOpenMobile]);
+
+  // Group nav items by their (static) group label.
+  const groups: { label?: string; items: NavItem[] }[] = [];
+  let currentGroup: string | undefined = '__initial__';
+  for (const item of navItems) {
+    if (item.group !== currentGroup) {
+      groups.push({ label: item.group, items: [item] });
+      currentGroup = item.group;
+    } else {
+      groups[groups.length - 1].items.push(item);
+    }
+  }
+
+  // The first nav item (dashboard root, e.g. /admin) matches exactly; everything
+  // else matches by path prefix so sub-routes light up their entry.
+  const isActiveHref = (href: string) =>
+    href === navItems[0]?.href
+      ? pathname === href
+      : pathname === href || pathname.startsWith(href + '/');
+
+  // Hrefs of parent items whose sub-items contain the current route.
+  const activeParents = () => {
+    const set = new Set<string>();
+    for (const item of navItems) {
+      if (item.items?.some((sub) => isActiveHref(sub.href))) set.add(item.href);
+    }
+    return set;
+  };
+
+  // Collapsible parents open by default: only the first one (plus whichever
+  // holds the current route, added below).
+  const defaultParents = () => {
+    const first = navItems.find((i) => i.items?.length);
+    const set = first ? new Set([first.href]) : new Set<string>();
+    for (const href of activeParents()) set.add(href);
+    return set;
+  };
+
+  // Which collapsible parents are open. Seeded with the defaults (SSR-safe),
+  // then replaced by the persisted set after mount if the user has one.
+  const storageKey = `sidebar-open:${brandHref}`;
+  const [openItems, setOpenItems] = useState<Set<string>>(defaultParents);
+
+  useEffect(() => {
+    let saved: string[] | null = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+    } catch {}
+    setOpenItems(() => {
+      const next = saved ? new Set(saved) : defaultParents();
+      for (const href of activeParents()) next.add(href);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+
+  // Keep the active parent open as the route changes, without touching others.
+  useEffect(() => {
+    setOpenItems((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const href of activeParents()) {
+        if (!next.has(href)) {
+          next.add(href);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  function toggleItem(href: string) {
+    setOpenItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(href)) next.delete(href);
+      else next.add(href);
+      try {
+        localStorage.setItem(storageKey, JSON.stringify([...next]));
+      } catch {}
+      return next;
+    });
+  }
+
+  return (
+    <Sidebar variant={variant} collapsible={collapsible}>
+      {/* Same height as the content header (h-14) so the brand centers on
+          the sidebar toggle, with equal space above and below. */}
+      <SidebarHeader className="h-14 justify-center py-0">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <Link
+              href={brandHref}
+              onClick={closeMobile}
+              className="text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm"
+            >
+              {typeof brand === 'string' ? (
+                <span className="flex-1 font-serif text-lg leading-snug italic">
+                  {brand}
+                </span>
+              ) : (
+                brand
+              )}
+            </Link>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+
+      <SidebarContent>
+        {groups.map((group, gi) => (
+          <SidebarGroup key={gi}>
+            {group.label && (
+              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            )}
+            <SidebarGroupContent className="flex flex-col gap-2">
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+
+                  // Collapsible parent with sub-items.
+                  if (item.items?.length) {
+                    const open = openItems.has(item.href);
+                    const childActive = item.items.some((sub) =>
+                      isActiveHref(sub.href)
+                    );
+                    return (
+                      <SidebarMenuItem key={item.href}>
+                        <SidebarMenuButton
+                          tooltip={item.label}
+                          isActive={childActive && !open}
+                          aria-expanded={open}
+                          onClick={() => toggleItem(item.href)}
+                        >
+                          <Icon />
+                          <span>{item.label}</span>
+                          <ChevronRight
+                            className={`text-sidebar-foreground/70 ml-auto size-4 shrink-0 transition-transform ${
+                              open ? 'rotate-90' : ''
+                            }`}
+                          />
+                        </SidebarMenuButton>
+                        {open && (
+                          <SidebarMenuSub>
+                            {item.items.map((sub) => (
+                              <SidebarMenuSubItem key={sub.href}>
+                                <SidebarMenuSubButton
+                                  render={<Link href={sub.href} />}
+                                  onClick={closeMobile}
+                                  isActive={isActiveHref(sub.href)}
+                                >
+                                  <span>{sub.label}</span>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ))}
+                          </SidebarMenuSub>
+                        )}
+                      </SidebarMenuItem>
+                    );
+                  }
+
+                  // Plain link.
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <Link href={item.href} onClick={closeMobile}>
+                        <SidebarMenuButton
+                          tooltip={item.label}
+                          isActive={isActiveHref(item.href)}
+                        >
+                          <Icon />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </Link>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
+      </SidebarContent>
+
+      <SidebarFooter>
+        {footerNavItems && footerNavItems.length > 0 && (
+          <SidebarMenu>
+            {footerNavItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = item.newTab
+                ? false
+                : item.href === '/'
+                  ? pathname === '/'
+                  : pathname.startsWith(item.href);
+              const button = (
+                <SidebarMenuButton tooltip={item.label} isActive={isActive}>
+                  <Icon />
+                  <span>{item.label}</span>
+                </SidebarMenuButton>
+              );
+              return (
+                <SidebarMenuItem key={item.href}>
+                  {item.newTab ? (
+                    <a
+                      href={localizeHref(item.href)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={closeMobile}
+                    >
+                      {button}
+                    </a>
+                  ) : (
+                    <Link href={item.href} onClick={closeMobile}>
+                      {button}
+                    </Link>
+                  )}
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+        )}
+        {footer}
+      </SidebarFooter>
+    </Sidebar>
+  );
+}

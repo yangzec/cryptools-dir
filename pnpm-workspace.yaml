@@ -1,0 +1,14 @@
+# Build scripts allowed for these packages (replaces package.json pnpm.onlyBuiltDependencies).
+allowBuilds:
+  '@parcel/watcher': true
+  '@swc/core': true
+  esbuild: true
+  msw: true
+  sharp: true
+  workerd: true
+
+overrides:
+  next: '-'
+  seroval: 1.6.8
+  seroval-plugins: 1.6.8
+autoInstallPeers: false
